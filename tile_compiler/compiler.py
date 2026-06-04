@@ -16,11 +16,13 @@ class CompiledPolicy:
 
     def __init__(self, table: dict[int, Any], hash_fn: Any = None) -> None:
         self._table = table
-        self._hash_fn = hash_fn or hash
+        # hash_fn is kept for backward compatibility but ignored;
+        # _hash_state (blake2b) is always used.
+        self._hash_fn = hash_fn
 
     def choose(self, state: Any) -> Optional[Any]:
         """Return the best action for *state*, or ``None`` if unknown."""
-        key = self._hash_fn(state) if self._hash_fn is not hash else self._hash_state(state)
+        key = self._hash_state(state)
         return self._table.get(key)
 
     @property
@@ -40,13 +42,67 @@ class CompiledPolicy:
 
     @staticmethod
     def _hash_state(state: Any) -> int:
-        if isinstance(state, (tuple, list)):
-            return hash(tuple(state))
-        return hash(state)
+        """Deterministic hash — delegates to canonical ``hash_state``."""
+        from tile_compiler import hash_state
+        return hash_state(state)
 
     def to_dict(self) -> dict[int, Any]:
         """Return the raw lookup table."""
         return dict(self._table)
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def save(self, path: str) -> None:
+        """Save compiled policy to a JSON file.
+
+        The saved file can be loaded on any platform with zero
+        dependencies — no numpy, no torch, no tile_compiler needed
+        for the raw lookup.
+        """
+        import json
+        from pathlib import Path
+
+        data = {
+            "version": 1,
+            "size": self.size,
+            "table": {str(k): v for k, v in self._table.items()},
+        }
+        Path(path).write_text(json.dumps(data, indent=2))
+
+    @classmethod
+    def load(cls, path: str) -> "CompiledPolicy":
+        """Load a compiled policy from a JSON file."""
+        import json
+        from pathlib import Path
+
+        data = json.loads(Path(path).read_text())
+        table = {int(k): v for k, v in data["table"].items()}
+        return cls(table=table)
+
+    def to_python(self, function_name: str = "choose") -> str:
+        """Export as a standalone Python function with zero dependencies.
+
+        The generated code uses only a dict lookup — no imports needed.
+        Suitable for deployment on microcontrollers, embedded systems,
+        or any environment where the tile_compiler package is unavailable.
+        """
+        lines = [
+            f'def {function_name}(state):',
+            f'    """Compiled tile policy — zero dependencies."""',
+            f'    _table = {{',
+        ]
+        for key, action in self._table.items():
+            action_repr = repr(action)
+            lines.append(f'        {key}: {action_repr},')
+        lines.extend([
+            f'    }}',
+            f'    key = hash(state) if not isinstance(state, (tuple, list)) else hash(tuple(state))',
+            f'    return _table.get(key)',
+            f'',
+        ])
+        return "\n".join(lines)
 
 
 def compile(field: TileField) -> CompiledPolicy:

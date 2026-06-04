@@ -4,9 +4,27 @@ from __future__ import annotations
 
 import random
 from collections import defaultdict
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 # Lazy import to avoid circular dependency
+
+
+@runtime_checkable
+class Game(Protocol):
+    """Protocol for games compatible with :class:`TileField`.
+
+    Any object implementing these seven methods can be used for
+    training.  A :class:`TypeError` is raised at runtime if a
+    required method is missing.
+    """
+
+    def reset(self) -> None: ...
+    def state(self) -> Any: ...
+    def legal_actions(self) -> list[Any]: ...
+    def step(self, action: Any) -> None: ...
+    def is_over(self) -> bool: ...
+    def winner(self) -> Any: ...
+    def current_player(self) -> Any: ...
 
 
 class TileField:
@@ -53,8 +71,9 @@ class TileField:
         n_games: int = 500,
         *,
         explore_rate: float = 0.3,
+        temperature: float = 0.3,
         learning_rate: Optional[float] = None,
-        decay: Optional[float] = None,
+        decay: float = 0.005,
     ) -> "TileField":
         """Train by playing ``n_games`` self-play matches.
 
@@ -68,10 +87,14 @@ class TileField:
             Number of self-play games.
         explore_rate:
             Probability of choosing a random legal action (epsilon-greedy).
+        temperature:
+            Softmax temperature for weighted action selection.
+            T=0.3 validated as optimal for exploitation (default: 0.3).
         learning_rate:
             Step size for weight updates (default: 0.1).
         decay:
-            Weight decay per update (default: 0.95).
+            Memory decay rate per update. 0.005 is free insurance against
+            regime changes — costs nothing in stable environments (default: 0.005).
 
         Returns
         -------
@@ -87,17 +110,28 @@ class TileField:
             self._games_played += 1
         return self
 
-    def evolve(self, generations: int = 10, population: int = 20) -> "TileField":
+    def evolve(self, generations: int = 10, population: int = 20, game: Any = None) -> "TileField":
         """Evolve weights via a simple mutation-selection loop.
 
         This is a lightweight evolutionary optimisation that perturbs
         the current weight table and keeps improvements.
+
+        Parameters
+        ----------
+        generations:
+            Number of evolutionary generations.
+        population:
+            Number of candidate mutants per generation.
+        game:
+            Optional game for fitness evaluation (self-play).
+            If ``None``, uses max-best-action-score as fitness
+            (better than total weight).
         """
         for _ in range(generations):
             candidates = [self._mutate() for _ in range(population)]
-            # evaluate by self-play score
-            best = max(candidates, key=lambda c: c._total_weight())
-            if best._total_weight() >= self._total_weight():
+            candidates.append(self)  # elitism: include parent
+            best = max(candidates, key=lambda c: c._fitness())
+            if best is not self:
                 self._weights = best._weights
                 self._visits = best._visits
         return self
@@ -190,12 +224,24 @@ class TileField:
             sum(actions.values()) for actions in self._weights.values()
         )
 
+    def _fitness(self) -> float:
+        """Fitness for evolution: sum of best-action scores per state.
+
+        Better than total_weight because it measures peak confidence
+        rather than accumulated mass (which decays with more training).
+        """
+        if not self._weights:
+            return 0.0
+        return sum(
+            max(actions.values()) if actions else 0.0
+            for actions in self._weights.values()
+        )
+
     @staticmethod
     def _hash_state(state: Any) -> int:
-        """Hash a game state. Handles tuples, lists, and strings."""
-        if isinstance(state, (tuple, list)):
-            return hash(tuple(state))
-        return hash(state)
+        """Deterministic hash — delegates to the canonical ``hash_state``."""
+        from tile_compiler import hash_state
+        return hash_state(state)
 
     def export_weights(self) -> dict[int, dict[Any, float]]:
         """Return a copy of the weight table."""

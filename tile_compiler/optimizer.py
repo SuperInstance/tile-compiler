@@ -92,19 +92,20 @@ def optimize(field: TileField) -> OptimizedPolicy:
             inlined += 1
     stats["inlined"] = inlined
 
-    # Pass 4: CSE — deduplicate states mapping to the same best action
-    action_groups: dict[Any, list[int]] = {}
+    # Pass 4: CSE — deduplicate states that are TRULY identical (same key, same best action)
+    # Note: we do NOT merge states that merely share the same best action,
+    # because each state key must independently resolve.
+    final_table: dict[int, Any] = {}
+    seen: dict[tuple, int] = {}  # (action,) -> first key
+    cse_removed = 0
+    # Re-add folded constants
+    for key, action in const_states.items():
+        final_table[key] = action
+    # Add remaining multi-action states
     for key, actions in table.items():
         best = max(actions, key=lambda a: actions[a])
-        action_groups.setdefault(best, []).append(key)
-    # Keep one representative per group, add folded states back
-    final_table: dict[int, Any] = dict(const_states)
-    cse_removed = 0
-    for action, keys in action_groups.items():
-        final_table[keys[0]] = action
-        if len(keys) > 1:
-            cse_removed += len(keys) - 1
-    stats["cse_removed"] = cse_removed
+        final_table[key] = best
+    stats["cse_removed"] = cse_removed  # 0 for now — real CSE needs semantics
 
     # Pass 5: Deploy — compact into final form
     stats["final_size"] = len(final_table)

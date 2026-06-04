@@ -42,7 +42,7 @@ def distill(fields: list[TileField], temperature: float = 1.0) -> TileField:
 
     result = TileField.__new__(TileField)
     result._weights = {}
-    result._visits = {}
+    result._visits = {k: 1 for k in merged}  # Mark all distilled states as visited
     result._games_played = sum(f.games_played for f in fields)
     result._learning_rate = fields[0]._learning_rate
     result._decay = fields[0]._decay

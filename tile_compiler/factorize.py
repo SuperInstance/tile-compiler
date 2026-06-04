@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import random
 from typing import Any, Optional
 
 
@@ -70,9 +71,8 @@ class FactorizedPolicy:
 
     @staticmethod
     def _hash_state(state: Any) -> int:
-        if isinstance(state, (tuple, list)):
-            return hash(tuple(state))
-        return hash(state)
+        from tile_compiler import hash_state
+        return hash_state(state)
 
 
 def factorize(
@@ -115,7 +115,7 @@ def factorize(
         for action, weight in field_weights[key].items():
             matrix[i][action_map[action]] = weight
 
-    # SVD via power iteration (zero-dependency)
+    # SVD via power iteration (zero-dependency, deterministic seed)
     u, s, vt = _svd_power_iteration(matrix, rank=min(m, n))
 
     # Choose rank
@@ -146,7 +146,7 @@ def factorize(
 
 
 def _svd_power_iteration(
-    matrix: list[list[float]], rank: int, iterations: int = 100
+    matrix: list[list[float]], rank: int, iterations: int = 100, seed: int = 42
 ) -> tuple[list[list[float]], list[float], list[list[float]]]:
     """Compute truncated SVD using power iteration. Zero dependencies."""
     m = len(matrix)
@@ -155,6 +155,7 @@ def _svd_power_iteration(
         return [], [], []
 
     rank = min(rank, m, n)
+    rng = random.Random(seed)
     u_vectors: list[list[float]] = []
     singular_values: list[float] = []
     v_vectors: list[list[float]] = []
@@ -163,9 +164,7 @@ def _svd_power_iteration(
     residual = [row[:] for row in matrix]
 
     for _ in range(rank):
-        # Random initial vector
-        import random
-        v = [random.gauss(0, 1) for _ in range(n)]
+        v = [rng.gauss(0, 1) for _ in range(n)]
 
         for _ in range(iterations):
             # u = residual @ v
