@@ -114,18 +114,22 @@ def analyze(
     report.n_states = len(weights)
 
     # --- Score statistics ---
-    all_scores: list[float] = []
+    # Use per-state best-action scores for CV (not raw all scores).
+    # Raw scores include both positive (wins) and negative (losses),
+    # so the mean ≈ 0 and CV → ∞. Best-action scores measure
+    # decision confidence — the conservation law applies to these.
+    best_action_scores: list[float] = []
     top_actions: dict[Any, int] = {}
     entropies: list[float] = []
 
     for actions in weights.values():
-        all_scores.extend(actions.values())
-
         if not actions:
             continue
 
         # Best action per state
         best = max(actions, key=lambda a: actions[a])
+        best_score = actions[best]
+        best_action_scores.append(best_score)
         top_actions[best] = top_actions.get(best, 0) + 1
 
         # Per-state entropy
@@ -137,9 +141,9 @@ def analyze(
                 h = -sum(p * math.log2(p) for p in probs if p > 1e-12)
                 entropies.append(h)
 
-    if all_scores:
-        report.score_mean = sum(all_scores) / len(all_scores)
-        variance = sum((s - report.score_mean) ** 2 for s in all_scores) / len(all_scores)
+    if best_action_scores:
+        report.score_mean = sum(best_action_scores) / len(best_action_scores)
+        variance = sum((s - report.score_mean) ** 2 for s in best_action_scores) / len(best_action_scores)
         report.score_std = math.sqrt(variance)
         report.score_cv = report.score_std / abs(report.score_mean) if abs(report.score_mean) > 1e-12 else 0.0
 
@@ -184,22 +188,25 @@ def analyze(
                 report.top_n_coverage[n] = top_n_sum / total_score
 
     # --- Recommendation ---
-    if report.dead_fraction > 0.5:
+    if not weights:
+        report.suggested_action = "train_more"
+        report.suggested_reason = "Field has no trained states"
+    elif report.dead_fraction > 0.5:
         report.suggested_action = "optimize"
         report.suggested_reason = (
             f"{report.dead_fraction:.0%} of tiles are dead — "
             "dead code elimination will help massively"
         )
-    elif report.active_tiles < 50 and report.score_cv < 0.05:
+    elif report.active_tiles < 50 and report.score_cv < 0.5:
         report.suggested_action = "compile"
         report.suggested_reason = (
             f"Only {report.active_tiles} active tiles — "
             "simple compilation is sufficient"
         )
-    elif report.score_cv > 0.05:
+    elif report.score_cv > 0.5:
         report.suggested_action = "train_more"
         report.suggested_reason = (
-            f"Score CV={report.score_cv:.4f} (>0.05) — "
+            f"Score CV={report.score_cv:.4f} (>0.5) — "
             "field hasn't converged yet"
         )
     else:
