@@ -24,20 +24,32 @@ class HierarchicalPolicy:
         assignments: dict[int, int],
         cluster_tables: list[dict[int, Any]],
         state_keys: list[int],
+        centroid_actions: Optional[dict[int, Any]] = None,
+        action_list: Optional[list[Any]] = None,
     ) -> None:
         self._centroids = centroids
         self._assignments = assignments
         self._cluster_tables = cluster_tables
         self._state_keys = state_keys
+        self._centroid_action = centroid_actions or {}
+        self._action_list = action_list or []
 
     def choose(self, state: Any) -> Optional[Any]:
         key = CompiledPolicy._hash_state(state)
         cluster_id = self._assignments.get(key)
-        if cluster_id is None:
+        if cluster_id is not None:
+            table = self._cluster_tables[cluster_id]
+            result = table.get(key)
+            if result is not None:
+                return result
+
+        # Centroid fallback: convert state to feature vector and find nearest
+        try:
+            vec = self._state_to_vector(state)
+            nearest = self._nearest_centroid(vec)
+            return self._centroid_action.get(nearest)
+        except (TypeError, ValueError):
             return None
-        table = self._cluster_tables[cluster_id]
-        # Return the cluster's best action for this state
-        return table.get(key)
 
     @property
     def n_clusters(self) -> int:
@@ -46,6 +58,32 @@ class HierarchicalPolicy:
     @property
     def total_entries(self) -> int:
         return sum(len(t) for t in self._cluster_tables)
+
+    def _state_to_vector(self, state: Any) -> list[float]:
+        """Convert a state to a feature vector for centroid matching."""
+        # Use blake2b digest bytes as feature vector (deterministic, fast)
+        import hashlib
+        if isinstance(state, (tuple, list)):
+            data = str(tuple(state)).encode()
+        else:
+            data = str(state).encode()
+        digest = hashlib.blake2b(data, digest_size=8).digest()
+        return [float(b) / 255.0 for b in digest]
+
+    def _nearest_centroid(self, vec: list[float]) -> int:
+        """Find the nearest centroid by Euclidean distance."""
+        best_cluster = 0
+        best_dist = float("inf")
+        for c, cent in enumerate(self._centroids):
+            # Ensure centroid and vector have compatible dimensions
+            dim = min(len(cent), len(vec))
+            if dim == 0:
+                continue
+            dist = sum((vec[i] - cent[i]) ** 2 for i in range(dim))
+            if dist < best_dist:
+                best_dist = dist
+                best_cluster = c
+        return best_cluster
 
     def __repr__(self) -> str:
         return (
@@ -140,9 +178,21 @@ def hierarchical_compile(
         if actions:
             cluster_tables[c][key] = max(actions, key=lambda a: actions[a])
 
+    # Compute centroid actions (majority vote per cluster)
+    centroid_actions: dict[int, Any] = {}
+    for c in range(k):
+        action_counts: dict[Any, int] = {}
+        for table in [cluster_tables[c]]:
+            for key, action in table.items():
+                action_counts[action] = action_counts.get(action, 0) + 1
+        if action_counts:
+            centroid_actions[c] = max(action_counts, key=lambda a: action_counts[a])
+
     return HierarchicalPolicy(
         centroids=centroids,
         assignments=assignment_map,
         cluster_tables=cluster_tables,
         state_keys=state_keys,
+        centroid_actions=centroid_actions,
+        action_list=action_list,
     )

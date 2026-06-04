@@ -50,7 +50,9 @@ class TileField:
         self._visits: dict[int, int] = defaultdict(int)
         self._games_played: int = 0
         self._learning_rate: float = 0.1
-        self._decay: float = 0.95
+        self._weight_decay: float = 0.95  # Keep fraction of old weight per update
+        self._score_decay: float = 0.005  # Memory decay rate (free insurance)
+        self._temperature: float = 0.3    # Softmax temperature
 
     @property
     def n_states(self) -> int:
@@ -71,9 +73,9 @@ class TileField:
         n_games: int = 500,
         *,
         explore_rate: float = 0.3,
-        temperature: float = 0.3,
+        temperature: Optional[float] = None,
         learning_rate: Optional[float] = None,
-        decay: float = 0.005,
+        decay: Optional[float] = None,
     ) -> "TileField":
         """Train by playing ``n_games`` self-play matches.
 
@@ -89,12 +91,13 @@ class TileField:
             Probability of choosing a random legal action (epsilon-greedy).
         temperature:
             Softmax temperature for weighted action selection.
-            T=0.3 validated as optimal for exploitation (default: 0.3).
+            T=0.3 validated as optimal for exploitation. Default: 0.3.
         learning_rate:
             Step size for weight updates (default: 0.1).
         decay:
-            Memory decay rate per update. 0.005 is free insurance against
-            regime changes — costs nothing in stable environments (default: 0.005).
+            Memory decay rate per game. 0.005 is free insurance against
+            regime changes — costs nothing in stable environments.
+            Default: 0.005.
 
         Returns
         -------
@@ -102,12 +105,16 @@ class TileField:
         """
         if learning_rate is not None:
             self._learning_rate = learning_rate
+        if temperature is not None:
+            self._temperature = temperature
         if decay is not None:
-            self._decay = decay
+            self._score_decay = decay
 
         for _ in range(n_games):
             self._play_one(game, explore_rate)
             self._games_played += 1
+            # Apply score decay after each game
+            self._apply_score_decay()
         return self
 
     def evolve(self, generations: int = 10, population: int = 20, game: Any = None) -> "TileField":
@@ -186,23 +193,50 @@ class TileField:
             self._update_weight(state_key, action, reward)
 
     def _choose_weighted(self, key: int, actions: list[Any]) -> Any:
-        """Choose from *actions* weighted by current field values."""
+        """Choose from *actions* using softmax with temperature."""
+        import math
         weights = self._weights.get(key, {})
         if not weights:
             return self._rng.choice(actions)
-        best = max(actions, key=lambda a: weights.get(a, 0.0))
-        return best
+
+        # Softmax with temperature
+        scores = [weights.get(a, 0.0) for a in actions]
+        t = max(self._temperature, 0.01)  # Clamp to avoid division by zero
+        exp_scores = [math.exp(s / t) for s in scores]
+        total = sum(exp_scores)
+        probs = [e / total for e in exp_scores]
+
+        # Weighted random choice
+        r = self._rng.random()
+        cumulative = 0.0
+        for i, p in enumerate(probs):
+            cumulative += p
+            if r <= cumulative:
+                return actions[i]
+        return actions[-1]
 
     def _update_weight(self, key: int, action: Any, reward: float) -> None:
-        """Apply a reward-based weight update."""
+        """Apply a reward-based weight update with exponential decay."""
         old = self._weights[key].get(action, 0.0)
-        self._weights[key][action] = old * self._decay + self._learning_rate * reward
+        self._weights[key][action] = old * self._weight_decay + self._learning_rate * reward
 
     def _reward(self, player: Any, winner: Any) -> float:
         """Compute reward for a player given the game winner."""
         if winner is None:
             return 0.0
         return 1.0 if player == winner else -1.0
+
+    def _apply_score_decay(self) -> None:
+        """Apply memory decay — gently pushes all weights toward 0.
+
+        Decay rate 0.005 means each game, weights lose 0.5% of their magnitude.
+        This is free insurance against regime changes: costs ~nothing in stable
+        environments but helps escape stuck strategies when opponent changes.
+        """
+        rate = self._score_decay
+        for actions in self._weights.values():
+            for action in actions:
+                actions[action] *= (1.0 - rate)
 
     def _mutate(self) -> "TileField":
         """Create a perturbed copy of this field."""
@@ -212,7 +246,9 @@ class TileField:
         child._visits = dict(self._visits)
         child._games_played = self._games_played
         child._learning_rate = self._learning_rate
-        child._decay = self._decay
+        child._weight_decay = self._weight_decay
+        child._score_decay = self._score_decay
+        child._temperature = self._temperature
 
         for key, actions in self._weights.items():
             for action, weight in actions.items():

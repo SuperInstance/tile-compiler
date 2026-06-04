@@ -1,7 +1,7 @@
 """Tests for TileField training and basic operations."""
 
 from tile_compiler.field import TileField
-from conftest import TicTacToe
+from tests.conftest import TicTacToe as TestTTT
 
 
 class TestTileFieldCreation:
@@ -11,7 +11,7 @@ class TestTileFieldCreation:
         assert f.games_played == 0
 
     def test_seed_reproducibility(self):
-        g = TicTacToe()
+        g = TestTTT()
         f1 = TileField(seed=42).train(g, n_games=50)
         f2 = TileField(seed=42).train(g, n_games=50)
         assert f1.export_weights() == f2.export_weights()
@@ -19,22 +19,22 @@ class TestTileFieldCreation:
 
 class TestTileFieldTraining:
     def test_train_builds_weights(self):
-        f = TileField(seed=0).train(TicTacToe(), n_games=10)
+        f = TileField(seed=0).train(TestTTT(), n_games=10)
         assert f.n_states > 0
         assert f.games_played == 10
 
     def test_train_more_games_more_states(self):
-        f10 = TileField(seed=0).train(TicTacToe(), n_games=10)
-        f100 = TileField(seed=0).train(TicTacToe(), n_games=100)
+        f10 = TileField(seed=0).train(TestTTT(), n_games=10)
+        f100 = TileField(seed=0).train(TestTTT(), n_games=100)
         assert f100.n_states >= f10.n_states
 
     def test_train_returns_self(self):
         f = TileField()
-        result = f.train(TicTacToe(), n_games=5)
+        result = f.train(TestTTT(), n_games=5)
         assert result is f
 
     def test_choose_returns_action(self):
-        g = TicTacToe()
+        g = TestTTT()
         f = TileField(seed=0).train(g, n_games=50)
         g.reset()  # Reset to get clean empty board state
         state = g.state()
@@ -49,12 +49,12 @@ class TestTileFieldTraining:
 
 class TestTileFieldEvolve:
     def test_evolve_returns_self(self):
-        f = TileField(seed=0).train(TicTacToe(), n_games=20)
+        f = TileField(seed=0).train(TestTTT(), n_games=20)
         result = f.evolve(generations=2, population=5)
         assert result is f
 
     def test_evolve_improves_or_maintains(self):
-        f = TileField(seed=0).train(TicTacToe(), n_games=20)
+        f = TileField(seed=0).train(TestTTT(), n_games=20)
         before = f._total_weight()
         f.evolve(generations=5, population=10)
         # Should not crash; weights should still exist

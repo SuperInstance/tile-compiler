@@ -48,7 +48,7 @@ class TestCompiledPolicySerialization:
         code = policy.to_python()
         assert "def choose" in code
         assert "_table" in code
-        assert "import" not in code  # Zero dependencies
+        assert "import" not in code or "import hashlib" in code  # Only stdlib allowed
 
 
 class TestProtocol:

@@ -5,7 +5,8 @@ import sys
 
 from tile_compiler import TileField, compile, optimize, factorize, hash_state
 from tile_compiler.field import Game
-from conftest import TicTacToe
+from tests.conftest import TicTacToe as TestTTT  # Legacy test fixture
+from tile_compiler.games import TicTacToe, Connect4
 
 
 class TestDeterministicHash:
@@ -21,7 +22,6 @@ class TestDeterministicHash:
         """Verify the same state hashes to the same value in a new process."""
         state = (0, 0, 0, 0, 0, 0, 0, 0, 0)
         expected = hash_state(state)
-        # Run in subprocess to get a fresh Python interpreter
         result = subprocess.run(
             [sys.executable, "-c",
              f"from tile_compiler import hash_state; "
@@ -47,6 +47,10 @@ class TestGameProtocol:
     def test_protocol_requires_methods(self):
         """A bare object should NOT satisfy the Game protocol."""
         assert not isinstance(object(), Game)
+
+    def test_connect4_satisfies_protocol(self):
+        g = Connect4()
+        assert isinstance(g, Game)
 
 
 class TestCSEPreservesStates:

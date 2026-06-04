@@ -82,25 +82,32 @@ class CompiledPolicy:
         return cls(table=table)
 
     def to_python(self, function_name: str = "choose") -> str:
-        """Export as a standalone Python function with zero dependencies.
+        """Export as a standalone Python function with zero external dependencies.
 
-        The generated code uses only a dict lookup — no imports needed.
-        Suitable for deployment on microcontrollers, embedded systems,
-        or any environment where the tile_compiler package is unavailable.
+        Uses only hashlib (stdlib) + a dict lookup. No numpy, torch, or
+        tile_compiler imports needed. Suitable for deployment on any
+        Python-capable system including MicroPython and embedded devices.
         """
         lines = [
+            'import hashlib',
+            '',
+            '',
             f'def {function_name}(state):',
-            f'    """Compiled tile policy — zero dependencies."""',
-            f'    _table = {{',
+            '    """Compiled tile policy — zero external dependencies."""',
+            '    _table = {',
         ]
         for key, action in self._table.items():
             action_repr = repr(action)
             lines.append(f'        {key}: {action_repr},')
         lines.extend([
-            f'    }}',
-            f'    key = hash(state) if not isinstance(state, (tuple, list)) else hash(tuple(state))',
-            f'    return _table.get(key)',
-            f'',
+            '    }',
+            '    if isinstance(state, (tuple, list)):',
+            '        data = str(tuple(state)).encode()',
+            '    else:',
+            '        data = str(state).encode()',
+            '    key = int(hashlib.blake2b(data, digest_size=8).hexdigest(), 16)',
+            '    return _table.get(key)',
+            '',
         ])
         return "\n".join(lines)
 
@@ -126,3 +133,7 @@ def compile(field: TileField) -> CompiledPolicy:
         if actions:
             table[state_key] = max(actions, key=lambda a: actions[a])
     return CompiledPolicy(table)
+
+
+# Alias that avoids shadowing Python's builtin compile()
+compile_field = compile

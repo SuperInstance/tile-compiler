@@ -66,7 +66,8 @@ def gpu_batch_evaluate(
     # Build state lookup tensor
     results: list[Optional[Any]] = []
     for state in states:
-        key = hash(tuple(state)) if isinstance(state, (tuple, list)) else hash(state)
+        from tile_compiler import hash_state as _hash_state
+        key = _hash_state(state)
         idx = state_map.get(key)
         if idx is None:
             results.append(None)
